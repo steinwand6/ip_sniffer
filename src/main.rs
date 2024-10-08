@@ -1,11 +1,11 @@
-use std::{
-    env,
-    net::{IpAddr, TcpStream},
-};
+use std::{env, net::IpAddr};
+
+use tokio::net::TcpStream;
 
 const MAX: u16 = 65535;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     if args.len() != 2 {
         eprintln!("Usage: ip_sniffer <ip>");
@@ -16,10 +16,27 @@ fn main() {
         .parse()
         .expect("Unable to parse param as IP address");
 
-    for port in 0..MAX {
-        match TcpStream::connect((ip_addr, port)) {
-            Ok(_) => println!("{} is open!", port),
-            Err(_) => (),
+    let (tx, mut rx) = tokio::sync::mpsc::channel(200);
+    for port in 1..=MAX {
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let res = check_port(ip_addr, port).await;
+            tx.send(res).await.unwrap();
+        });
+    }
+    drop(tx);
+
+    while let Some(res) = rx.recv().await {
+        match res {
+            None => (),
+            Some(port) => println!("{:?} is open", port),
         }
+    }
+}
+
+async fn check_port(ip: IpAddr, port: u16) -> Option<u16> {
+    match TcpStream::connect((ip, port)).await {
+        Ok(_) => Some(port),
+        _ => None,
     }
 }
