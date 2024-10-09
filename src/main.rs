@@ -1,5 +1,6 @@
 use std::{env, net::IpAddr};
 
+use futures::{stream, StreamExt};
 use tokio::net::TcpStream;
 
 const MAX: u16 = 65535;
@@ -16,27 +17,15 @@ async fn main() {
         .parse()
         .expect("Unable to parse param as IP address");
 
-    let (tx, mut rx) = tokio::sync::mpsc::channel(200);
-    for port in 1..=MAX {
-        let tx = tx.clone();
-        tokio::spawn(async move {
-            let res = check_port(ip_addr, port).await;
-            tx.send(res).await.unwrap();
-        });
-    }
-    drop(tx);
-
-    while let Some(res) = rx.recv().await {
-        match res {
-            None => (),
-            Some(port) => println!("{:?} is open", port),
-        }
-    }
+    stream::iter(1..=MAX)
+        .for_each_concurrent(200, |port| async move {
+            if is_open_port(ip_addr, port).await {
+                println!("{port} is open");
+            }
+        })
+        .await;
 }
 
-async fn check_port(ip: IpAddr, port: u16) -> Option<u16> {
-    match TcpStream::connect((ip, port)).await {
-        Ok(_) => Some(port),
-        _ => None,
-    }
+async fn is_open_port(ip: IpAddr, port: u16) -> bool {
+    TcpStream::connect((ip, port)).await.is_ok()
 }
